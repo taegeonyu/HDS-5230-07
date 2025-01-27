@@ -1,0 +1,267 @@
+---
+title: "Week 1 Assignment"
+date: "Jan 27th, 2025"
+author: "Taegeon Yu"
+---
+
+## Question 1
+
+```{r}
+# importing the data.table library to fast read datasets
+library(data.table)
+
+# importing the dplyr library to use pipeline
+library(dplyr)
+
+# importing the tidyr library to drop null values
+library(tidyr)
+```
+
+```{r}
+# reading the patient data
+patient <- fread("Downloads/healthcare-data/Patient.csv")
+```
+
+```{r}
+# reading the mortality data
+mortality <- fread("Downloads/healthcare-data/Mortality.csv")
+```
+
+```{r}
+# converting the MISSING value into null value
+patient <- patient %>% 
+  mutate(Gender = na_if(Gender, "MISSING"))
+
+# dropping null values
+patient <- patient %>% 
+                    drop_na()
+
+# subseting the Gender variable into male and female
+patient <- patient %>% 
+              filter(Gender %in% c("male", "female"))
+
+patient
+```
+
+```{r}
+# merging the datasets (patient, mortality) on Patient ID
+patient_mort <- merge(patient, mortality, by = "PatientID", all.x = TRUE)
+patient_mort
+```
+
+```{r}
+# creating a new variable with patient's death status
+patient_mort <- patient_mort %>% 
+                mutate(PatientStatus = ifelse(is.na(DateOfDeath), "Alive", "Dead"))
+```
+
+```{r}
+# creating a subset data with gender and patient status
+gender_death <- patient_mort[,.(Gender, PatientStatus)]
+gender_death
+```
+
+```{r}
+# calculating the death rate of each gender
+
+gender_death[, .(
+  MortalityRate = sum(PatientStatus == "Dead") / .N
+), by = Gender]
+```
+
+-   The death rate of male patients (approx 36.2%) is slightly higher than that of female patients (approx 35.1%).
+
+## Question 2
+
+```{r}
+# reading the outpatient dataset
+outpatient <- fread("Downloads/healthcare-data/OutpatientVisit.csv")
+outpatient
+```
+
+```{r}
+# reading the disease map dataset
+disease_map <- fread("Downloads/healthcare-data/DiseaseMap.csv")
+disease_map
+```
+
+```{r}
+# sorting the ICDs
+setorder(outpatient, ICD10_1, ICD10_2, ICD10_3)
+setkey(disease_map, ICD10)
+```
+
+```{r}
+# melting the ICDs for better compatability
+outpatient_melt <- melt(outpatient, 
+                        id.vars = c("PatientID"),
+                        measure.vars = c("ICD10_1", "ICD10_2", "ICD10_3"),
+                        variable.name = "ICD_Type",
+                        value.name = "ICD10")
+
+outpatient_melt
+```
+
+-   The ICD10_1,2,3 are now combined into ICD_Type with corresponding ICD10 values.
+
+```{r}
+# subseting the disease map data
+dmap <- disease_map[, .(ICD10, Condition)]
+dmap
+```
+
+```{r}
+# merging outpatient_melt and dmap datasets
+pattern_df <- merge(outpatient_melt, dmap, by = "ICD10")
+# dropping the duplicated rows
+pattern_df <- pattern_df[!duplicated(pattern_df)]
+pattern_df
+```
+
+```{r}
+# merging the pattern_df and gender_df datasets
+gender_df <- patient[, .(PatientID, Gender)]
+pattern_df <- merge(pattern_df, gender_df, by = "PatientID")
+pattern_df
+```
+
+-   The dataset for question 2 is ready after few processing and merging.
+
+```{r}
+# calculating the total number of unique male and female patients
+total_patients_gen <- pattern_df[, .(
+  MaleTotal = uniqueN(PatientID[Gender == "male"]),
+  FemaleTotal = uniqueN(PatientID[Gender == "female"]),
+  All = uniqueN(PatientID)
+)]
+
+total_patients_gen
+```
+
+-   The total number of male and female are 5897 and 6310 respectively with total number of 12207.
+-   Now let's look at the number of patients by gender in every condition.
+
+```{r}
+# calcularting the counts of unique patients by gender and condition
+patient_condition <- pattern_df[, .(
+  Male = uniqueN(PatientID[Gender == "male"]),
+  Female = uniqueN(PatientID[Gender == "female"]),
+  All = uniqueN(PatientID)
+), by = Condition]
+
+patient_condition
+```
+
+-   The number of patients in terms of condition, the hyper tension has the highest number of patients.
+-   Now let's convert these numbers into percentage.
+
+```{r}
+# converting the numbers to percentage
+patient_condition <- patient_condition[, `:=`(
+  Male = round((Male / total_patients_gen$MaleTotal) * 100, 2),
+  Female = round((Female / total_patients_gen$FemaleTotal) * 100, 2),
+  All = round((All / total_patients_gen$All) * 100, 2)
+)]
+
+# adding the percentage sign
+patient_condition <- patient_condition[, `:=`(
+  Male = sprintf("%.1f%%", Male),
+  Female = sprintf("%.1f%%", Female),
+  All = sprintf("%.1f%%", All)
+)]
+```
+
+-   The number of each patients for condition are divided by total number of gender and percentage signs were added to the values.
+
+```{r}
+# final table
+patient_condition
+```
+
+-   Patients were most invulnerable to hypertension, showing approximately 40 percent in general, followed by obesity with approximately 22 percent.
+
+## Question 3
+
+```{r}
+# extracting the year from visit date and death date into new variables
+outpatient[, VisitYear:= year(as.Date(VisitDate))]
+mortality[, DeathYear := year(as.Date(DateOfDeath))]
+```
+
+```{r}
+# finding the visiting year for every patient
+first_visits <- outpatient[, .(FirstVisitYear = min(VisitYear)), by = PatientID]
+first_visits
+```
+
+```{r}
+# merging the first_visits and mortality datasets on patient id
+date_data <- merge(first_visits, mortality, by = "PatientID", all.x = TRUE)
+
+# dropping the third column from the merged dataset and dropping the null values
+date_data <- date_data[, -3]
+date_data <- date_data %>% 
+                drop_na()
+```
+
+```{r}
+date_data
+```
+
+```{r}
+# setting the data table with year range from 2005 to 2018
+year <- data.table(Year = 2005:2018)
+year
+```
+
+```{r}
+# calculating the number of patients at risk (people who had their first visit on or before the specific year and whose year of death is after or in the specific year.)
+year[, RiskPopulation := sapply(Year, function(year) {
+  date_data[FirstVisitYear <= year & DeathYear >= year, .N]
+})]
+```
+
+```{r}
+year
+```
+
+```{r}
+# calculating the number of dead patients
+year[, Deaths := sapply(Year, function(year){
+  date_data[DeathYear == year, .N]
+})]
+```
+
+```{r}
+# calculating the mortality rate according to patients at risk and deaths
+year[, MortalityRate := round(ifelse(RiskPopulation > 0, Deaths/RiskPopulation, 0), 3)]
+year
+```
+
+-   The patients at risk and deaths keep increasing until 2011 and reduces after that year.
+-   The mortality rate keeps increasing, reaching to 100 percent in 2018.
+
+```{r}
+library(ggplot2)
+
+# plotting the mortality rate
+ggplot(data = year, aes(x = Year, y = MortalityRate)) + 
+  geom_line(color = "blue", size = 1) +
+  labs(title = "Mortality Rate Patterns (2005 ~ 2018)",
+      x = "Mortality Rate", y = "Year") + 
+  scale_x_continuous(breaks = seq(2005, 2018, by = 1)) +
+  theme_minimal()
+```
+
+-   As indicated in the final table, the mortality rate keeps increasing.
+
+```{r}
+ggplot(data = year, aes(x = Year, y = RiskPopulation)) + 
+  geom_line(color = "red", size = 1) +
+  labs(title = "Risk Population Patterns (2005 ~ 2018)",
+      x = "Risk Population", y = "Year") + 
+  scale_x_continuous(breaks = seq(2005, 2018, by = 1)) +
+  theme_minimal()
+```
+
+-   As it was indicated in the final table as well, the risk population keep increasing until year 2011 and drops starting from 2012.
