@@ -1,0 +1,235 @@
+---
+title: "Week 2 Assignment"
+date: "Feb 2nd, 2025"
+author: "Taegeon Yu"
+---
+
+## Q1. Generate 100 bootstrapped samples of subsets of rows from the Boston dataset and fit a GLM on each of the samples serially.
+
+```{r}
+# load the libraries for data visualization and bootstrap
+library(MASS) 
+library(boot) 
+
+# load data and set seed
+data("Boston")
+Boston
+```
+
+```{r}
+# ensures reproducibility
+set.seed(42)
+
+# create function to fit glm
+glm_func <- function(data, rows) {
+  sub_data <- data[rows, ]
+  mod <- glm(medv ~., data = sub_data, family = gaussian())
+  return(mod)
+}
+```
+
+```{r}
+# create an empty list to store 100 models
+models <- vector("list", 100)
+```
+
+```{r}
+# generate 100 bootstrapped samples and fit models
+for (i in 1:100) {
+  rows <- sample(1:nrow(Boston), replace = TRUE)
+  models[[i]] <- glm_func(Boston, rows)
+}
+```
+
+```{r}
+head(models)
+```
+* Statistical descriptions of glm models are ready.
+
+## Q2. For each of the model, extract the (or a) statistic that represents model fit.
+```{r}
+# initialize dataframe with r2 and adjr2 with zero values
+mod_stats <- data.frame(
+  R2 = numeric(100),
+  Adj_R2 = numeric(100)
+)
+
+head(mod_stats)
+```
+
+```{r}
+# extract r2 and adjr2 from models and put the values in the initialized df
+for (i in 1: 100) {
+  mod_summary <- summary(models[[i]])
+  
+  # R2
+  mod_stats$R2[i] <- 1 - (mod_summary$deviance / mod_summary$null.deviance)
+  
+  # Adj-R2
+  n <- nrow(models[[i]]$model)
+  p <- length(models[[i]]$coefficients) - 1
+  mod_stats$Adj_R2[i] <- 1 - ((1 - mod_stats$R2[i]) * ((n - 1) / (n - p - 1)))
+}
+  
+head(mod_stats)
+```
+* The empty data frame is changed with r2 and adj_r2 values.
+
+## Q3. Aggregate the model fit statistics across the 100 bootstrapped samples and plot the results. Additionally compute the mean and inter-quartile range values for these test statistics.
+
+```{r}
+# data frame with mean and iqr for stats summary(r2 & adjr2)
+stats_summary <- data.frame(
+  Stats = c("R2", "Adj_R2"),
+  Mean = c(mean(mod_stats$R2), mean(mod_stats$Adj_R2)),
+  IQR = c(IQR(mod_stats$R2), IQR(mod_stats$Adj_R2))
+)
+
+stats_summary
+```
+* The mean value of both r2 and adj-r2 are approximately 75 percent, indicating good prediction capacity of the model. Howvever, judging by the slightly reduced adj_r2 compared to r2, some predictors are not contributing well.
+
+* Very low IQR suggests the consistency of the model performance.
+```{r}
+# load libraries for visualization and melting
+library(ggplot2)
+library(reshape2)
+
+# melt the data frame
+mod_stats_melt <- melt(mod_stats)
+
+# plot the result
+ggplot(mod_stats_melt, aes(x = value, fill = variable)) +
+  geom_histogram(alpha = 0.7, position = "identity") +
+  facet_wrap(~variable) +
+  ggtitle("Distribution of R² and Adjusted R²") +
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+* The histogram of R2 and Adj-R2 looks pretty much the same, however, the adjusted-R2 has more values approximately close to 0.75.
+
+## Q4. Next, repeat steps 1 - 3 by executing them in parallel. For the sake of replicability, be sure to generate the same bootstrapped samples across these two sets of model-fitting operations (i.e., set a seed, and start from it for both serial and parallel generation of samples and the subsequent steps).
+
+```{r}
+# load required libraries for parallel processing, loops, and execution time comparison
+library(doParallel) 
+library(foreach)
+library(microbenchmark) 
+```
+
+```{r}
+# finding the number of available cores (minus 1 to prevent system overload)
+cores <- detectCores() - 1
+cores
+```
+
+```{r}
+# create parallel cluster
+cl <- makeCluster(cores)
+cl
+```
+
+```{r}
+# register the cluster so that foreach can use it
+registerDoParallel(cl)
+```
+
+```{r}
+set.seed(42)
+
+boot_num <- 100
+
+boot_models <- vector("list", boot_num)
+
+for (i in 1:boot_num){
+  boot_models[[i]] <- sample(1:nrow(Boston), replace = TRUE)
+}
+```
+
+```{r}
+glm_func <- function(data, rows) {
+  sub_data <- data[rows, ]
+  mod <- glm(medv ~ ., data = sub_data, family = gaussian())
+  return(mod)
+}
+```
+
+```{r}
+parallel_mods <- foreach(i = 1:boot_num, .packages = "MASS") %dopar% {
+  glm_func(Boston, boot_models[[i]])
+}
+```
+
+```{r}
+# initialize dataframe with r2 and adjr2 with zero values
+par_mod_stats <- data.frame(
+  R2 = numeric(100),
+  Adj_R2 = numeric(100)
+)
+```
+
+```{r}
+# extract r2 and adjr2 from models and put the values in the initialized df
+par_mod_stats <- foreach(i = 1:boot_num, .packages = "MASS", .combine = rbind) %dopar% {
+  par_mod_summary <- summary(parallel_mods[[i]])
+  
+  # Compute R²
+  r2 <- 1 - (par_mod_summary$deviance / par_mod_summary$null.deviance)
+  
+  # Compute Adjusted R²
+  n <- nrow(parallel_mods[[i]]$model)
+  p <- length(parallel_mods[[i]]$coefficients) - 1
+  adj_r2 <- 1 - ((1 - r2) * ((n - 1) / (n - p - 1)))
+  
+  # Return as a row for efficient combination
+  data.frame(R2 = r2, Adj_R2 = adj_r2)
+}
+
+par_mod_stats
+```
+
+```{r}
+# data frame with mean and iqr for stats summary(r2 & adjr2)
+par_stats_summary <- data.frame(
+  Stats = c("R2", "Adj_R2"),
+  Mean = c(mean(par_mod_stats$R2), mean(par_mod_stats$Adj_R2)),
+  IQR = c(IQR(par_mod_stats$R2), IQR(par_mod_stats$Adj_R2))
+)
+
+par_stats_summary
+```
+
+```{r}
+# compare sequential vs parallel coding 
+comparison <- microbenchmark(
+  # Sequential
+  Sequential = {
+    sequential_models <- vector("list", boot_num)
+    for (i in 1:boot_num) {
+      sequential_models[[i]] <- glm_func(Boston, boot_models[[i]])
+    }
+  },
+  
+  # Parallel
+  Parallel = {
+    parallel_models <- foreach(i = 1:boot_num, .packages = "MASS") %dopar% {
+      glm_func(Boston, boot_models[[i]])}
+    },
+  
+  times = 5)
+
+comparison
+```
+* The computational time is shorter for sequential coding than parallel coding.
+
+## Q 5-1. Are the distributions of the model fit statistics similar or different?
+
+```{r}
+comparison_stats <- rbind(stats_summary, par_stats_summary)
+comparison_stats
+```
+* The summary of stats(R2, Adj_R2) are the same with each other for both sequential and parallel approaches, indicating that while parallel techniques may affect the time of the computation, but not the results.
+
+## Q 5-2. Are the execution times for the serial and parallel approaches same or different?
+
+* As observed from the comparison between sequential and parallel coding, the result showed that the sequential coding was faster, opposite to our expectations. However, parallel technique does not always guarantee faster computation. For this case, the glm function used to fit the regression models with the Gaussian family is a pretty simple method that might not require parallel coding. Moreover, the Boston data set, which contains 506 rows and 14 features might not require heavy computation techniques for improvement. Additionally, 9 cores may be redundant for this case with a simple regression technique and small data set, leading to increased overhead.
