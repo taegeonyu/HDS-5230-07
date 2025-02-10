@@ -1,0 +1,108 @@
+---
+title: "Week3 assignment - question 2"
+date: "Feb 9th, 2025"
+author: "Taegeon Yu"
+---
+
+## Replicating the Python codes from question 1 into R codes
+
+```{r}
+## read and manipulate the dataset
+df <- readxl::read_xls("clinics.xls")
+df <- df[, c("bizState", "locLat", "locLong")]
+colnames(df) <- c("state", "latitude", "longitude")
+head(df)
+```
+
+* The same sub-data used in Python code is created.
+
+```{r}
+# ensure the latitude and longitude are numeric values
+df$latitude <- as.numeric(df$latitude)
+df$longitude <- as.numeric(df$longitude)
+```
+
+```{r}
+# haversine function
+haversine <- function(lat1, lon1, lat2, lon2) {
+  MILES <- 3959  
+  # convert degrees into radians for code compatability
+  lat1 <- lat1 * pi / 180
+  lon1 <- lon1 * pi / 180
+  lat2 <- lat2 * pi / 180
+  lon2 <- lon2 * pi / 180
+  
+  dlat <- lat2 - lat1
+  dlon <- lon2 - lon1
+  
+  a <- sin(dlat / 2)^2 + cos(lat1) * cos(lat2) * sin(dlon / 2)^2
+  c <- 2 * asin(sqrt(a))
+  
+  return(MILES * c)
+}
+```
+* The haversine function equivalent to that of the Python code is created.
+* We will use for-loop, apply, and vectorization techniques to compare with Python's computation efficiency.
+
+```{r}
+for_loop_function <- function(df) {
+  distances <- numeric(nrow(df))
+  for (i in seq_len(nrow(df))) {
+    distances[i] <- haversine(40.671, -73.985, df$latitude[i], df$longitude[i])
+  }
+  return(distances)
+}
+```
+
+* The for loop function similar to that of the Python code is created.
+
+```{r}
+apply_function <- function(df) {
+  return(apply(df, 1, function(row) {
+    haversine(40.671, -73.985, as.numeric(row["latitude"]), as.numeric(row["longitude"]))
+  }))
+}
+```
+
+* The apply function similar to that of the Python code is created.
+
+```{r}
+vect_function <- function(df) {
+  return(haversine(40.671, -73.985, df$latitude, df$longitude))
+}
+```
+
+* The vectorization function similar to that of the Python code is created.
+
+```{r}
+# compare three methods in terms of efficiency
+library(microbenchmark)
+
+benchmark <- microbenchmark(
+  for_loop = for_loop_function(df),
+  apply_method = apply_function(df),
+  vectorized = vect_function(df),
+  times = 100
+)
+```
+
+```{r}
+# print the computation time as "ms"
+print(benchmark, unit = "ms")
+```
+* The results are out, but we only need the computation time with mean values.
+
+```{r}
+results <- summary(benchmark)
+
+df_results <- data.frame(
+  Method = c("For Loop", "Apply", "Vectorized"),
+  # convert to ms
+  Execution_Time_ms = results$mean / 1000000  
+)
+
+df_results
+```
+* The execution time for for-loop, apply, and vectorization function is tabulated.
+* It looks like all the functions used for comparison shows that R clearly outperforms Python for efficiency for this case.
+* The apply function, which took the longest time in R, shows significantly better efficiency than Python's numpy vectorization.
