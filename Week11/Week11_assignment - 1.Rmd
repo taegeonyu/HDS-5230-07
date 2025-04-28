@@ -1,0 +1,241 @@
+## Week 11 Assignment - R
+
+```{r}
+library(mlbench)
+library(purrr)
+
+data("PimaIndiansDiabetes2")
+ds <- as.data.frame(na.omit(PimaIndiansDiabetes2))
+
+```
+
+
+```{r}
+## fit a logistic regression model to obtain a parametric equation
+logmodel <- glm(diabetes ~ ., data = ds, family = "binomial")
+summary(logmodel)
+```
+
+```{r}
+cfs <- coefficients(logmodel)  ## extract the coefficients
+prednames <- variable.names(ds)[-9]  ## fetch the names of predictors (drop target variable)
+prednames
+```
+
+```{r}
+sz <- 100000000  ## to be used in sampling
+
+dfdata <- map_dfc(prednames,
+                  function(nm) {  ## function to create a sample-with-replacement for each predictor
+                    eval(parse(text = paste0("sample(ds$", nm,
+                                             ", size = sz, replace = T)")))
+                  })
+
+names(dfdata) <- prednames
+```
+```{r}
+class(cfs[2:length(cfs)])
+
+length(cfs)
+length(prednames)
+```
+
+```{r}
+## Compute the logit values
+pvec <- map((1:8),
+            function(pnum) {
+              cfs[pnum+1] * eval(parse(text = paste0("dfdata$", prednames[pnum])))
+            }) %>%
+  reduce(`+`) + 
+  cfs[1]  ## add the intercept
+
+## Compute probabilities and assign outcome
+dfdata['outcome'] <- ifelse(1 / (1 + exp(-pvec)) > 0.5, 1, 0)
+```
+
+```{r}
+head(dfdata)
+```
+
+```{r}
+# copy the data
+library(data.table)
+df <- copy(dfdata)
+```
+
+## XGBoost in R – direct use of xgboost() with simple cross-validation
+```{r}
+library(dplyr)
+library(xgboost)
+
+xgboost_direct_eval <- function(df, size) {
+  set.seed(42)
+  
+  # sample data
+  data <- df %>% sample_n(size = size, replace = FALSE)
+  
+  # split into X and y, convert X to matrix
+  X <- data %>% select(-outcome) %>% as.matrix()
+  y <- data$outcome
+  
+  # convert to dmtrix for faster and efficient memory usage
+  train_dmat <- xgb.DMatrix(data = X, label = y)
+  
+  # define parameters
+  params <- list(
+    objective = "binary:logistic",
+    eval_metric = "logloss"
+  )
+  
+  # start time
+  start_time <- Sys.time()
+  
+  # cross valiadtion
+  cv_results <- xgb.cv(
+    params = params,
+    data = train_dmat,
+    nrounds = 100,
+    nfold = 5,
+    stratified = TRUE,
+    verbose = 0
+  )
+  
+  # checking the taken time
+  time_taken <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
+  
+  # check the lowest error rate
+  best_error <- min(cv_results$evaluation_log$test_logloss_mean)
+  # get best accuracy by subtracting from 1
+  accuracy <- 1 - best_error
+  
+  # return results
+  results <- list()
+  results[[as.character(size)]] <- list(
+    accuracy = accuracy,
+    time_taken = time_taken
+  )
+  
+  return(results)
+}
+```
+
+```{r}
+# # xgboost with 100 samples
+xgboost_direct_eval(df, 100)
+```
+
+```{r}
+# # xgboost with 1000 samples
+xgboost_direct_eval(df, 1000)
+```
+
+```{r}
+# xgboost with 10000 samples
+xgboost_direct_eval(df, 10000)
+```
+
+```{r}
+# xgboost with 100000 samples
+xgboost_direct_eval(df, 100000)
+```
+
+```{r}
+# xgboost with 1000000 samples
+xgboost_direct_eval(df, 1000000)
+```
+
+```{r}
+# xgboost with 10000000 samples
+xgboost_direct_eval(df, 10000000)
+```
+
+## XGBoost in R – via caret, with 5-fold CV simple cross-validation
+
+```{r}
+library(caret)
+xgboost_caret_eval <- function(df, size) {
+  # hide warnings
+  old_warn <- getOption("warn")
+  options(warn = -1)
+  
+  set.seed(42)
+  
+  # sample data with replacement
+  data <- df %>% sample_n(size = size, replace = FALSE)
+  
+  # split into X and y, no matrix
+  X <- data %>% select(-outcome) %>% as.data.frame()
+  y <- as.factor(data$outcome) 
+  
+  # define training control
+  train_ctrl <- trainControl(
+    method = "cv",
+    number = 5,
+    verboseIter = FALSE
+  )
+  
+  # start time
+  start_time <- Sys.time()
+  
+  # train model using caret
+  model <- train(
+    x = X,
+    y = y,
+    method = "xgbTree",
+    trControl = train_ctrl,
+    metric = "Accuracy",
+    verbose = 0,
+    verbosity = 0
+  )
+  
+  # checking the taken time
+  time_taken <- as.numeric(difftime(Sys.time(), start_time, units = "secs"))
+  
+  # pick the best accuracy score
+  accuracy <- max(model$results$Accuracy)
+  
+  # return results
+  results <- list()
+  results[[as.character(size)]] <- list(
+    accuracy = accuracy,
+    time_taken = time_taken
+  )
+  
+  sink()
+  sink(type = "message")
+  
+  return(results)
+}
+```
+
+```{r}
+# xgboost with 100 samples
+xgboost_caret_eval(df, 100)
+```
+
+```{r}
+# xgboost with 1000 samples
+xgboost_caret_eval(df, 1000)
+```
+
+```{r}
+# xgboost with 10000 samples
+xgboost_caret_eval(df, 10000)
+```
+
+```{r}
+# xgboost with 100000 samples
+xgboost_caret_eval(df, 100000)
+```
+
+```{r}
+# xgboost with 1000000 samples
+xgboost_caret_eval(df, 1000000)
+```
+
+```{r}
+# xgboost with 10000000 samples
+xgboost_caret_eval(df, 10000000)
+```
+
+* I don't know why but the results are all gone after I saved the file, but the numbers in the pdf file regarding R are all from this notebook. I will not run the notebook again because it takse too much time and I might the deadline. I apologize for the inconvenience.
